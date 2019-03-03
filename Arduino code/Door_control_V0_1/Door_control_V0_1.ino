@@ -1,5 +1,6 @@
 #include "Sim.h"
 
+//GIT KRAKEN TEST
 //Pins that will be used for the software serial to communicate with the sim900 chip
 const byte SW_SERIAL_PIN1 = 2;
 const byte SW_SERIAL_PIN2 = 3;
