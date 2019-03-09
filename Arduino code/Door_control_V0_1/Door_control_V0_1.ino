@@ -36,6 +36,7 @@ possible status updates from Sim lib to main sketch
     const byte TUREND_OFF = 5;
 */
 void updateCallback(byte message){
+  Serial.println("CB");
   if (sending){
     //if sending started use info from SIM to send the message
     sendSequence(message);
@@ -48,18 +49,18 @@ void setup() {
   //Serial setup
   //Initiate serial with the computer
   Serial.begin(9600);
-  Serial.println("Setup start");
   //PIN setup
   pinMode(DOOR_SENSOR_P, INPUT_PULLUP);
   //Turn the sim module of on startup
   digitalWrite(7, LOW);
-  Serial.println("Setup end");
+  Serial.println("ON");
 }
 
 
 void loop() {
   manualControl();
   sim.loop();
+  /*
   if(!sending){
     //if we are not sending already, check for door trigger
     if(checkDoorOpen()){
@@ -70,6 +71,7 @@ void loop() {
       }
     } 
   }
+  */
 }
 //turn off sending of SMS and turns the sim chip of
 void stopSim(){
@@ -81,18 +83,20 @@ void sendSequence(byte simStatus){
   //the first status mesages from sim will be about initialization finished or failed
   switch(simStatus){
     case sim.INIT_FINISHED:
+      Serial.println("SIM INIT SUCCESS");
       //if init has finished send the sms
-      sim.sendMessage("Test 5");
+      sim.sendMessage("Init finished");
       break;
     case sim.INIT_FAILED:
       //if init failed 
       stopSim();
       //TODO: perharps try resending
       //TODO: distinguish errors that mean no SIM card etc, and errors that might allow for resending
-      Serial.println("send failed");
+      Serial.println("Init failed");
       break;
     case sim.SMS_SENT:
-      //if init succesfull turn of sim module 
+      //if init succesfull turn of sim module
+      Serial.println("SMS_SUCCESS"); 
       stopSim();
       break;
     case sim.SMS_SEND_FAILED:
@@ -103,6 +107,7 @@ void sendSequence(byte simStatus){
     case sim.TUREND_OFF:
       break;
     default:
+      Serial.println("CB UM");
       break;
   }
 }
@@ -168,6 +173,7 @@ unsigned long timePassed(unsigned long time){
 //allows control of sim with serial port
 void manualControl(){
   if(Serial.available()){
+    Serial.println("man");
     while(Serial.available()){
       char pcChar = Serial.read();
       if (pcChar == 'a'){
@@ -181,6 +187,9 @@ void manualControl(){
       } else if (pcChar == 'w') {
         sim.sendMessage("Test 3");
       } else if (pcChar == 'e') {
+        //Initiate sim setup
+        sim.setupSim();
+        //The scetch will auomatically send the message when sim has been initialized
         sending = true;
       }
     }

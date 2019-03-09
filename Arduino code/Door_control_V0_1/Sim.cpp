@@ -93,7 +93,6 @@ void Sim::initMsgR(){
     wrToSim();
   } else if (CALL_READY.length() == (simInBufferCount - 2)){
     //call ready message received. Initialization can now be exited
-    Serial.println("SETUP SUCCESS");
     updateStatusCb(INIT_FINISHED);
     simStatus = ST_OK;
     displayStatus();
@@ -181,11 +180,10 @@ void Sim::simSendingSMSMsgR(){
   } else if (smsSendStep == 4 &&
              simInBuffer[0] == '+' &&
              simInBuffer[1] == 'C' &&
-             simInBuffer[2] == 'M'){
-    Serial.println("SMS_SUCCESS");     
-    updateStatusCb(INIT_FINISHED);    
+             simInBuffer[2] == 'M'){    
+    updateStatusCb(SMS_SENT);    
     //on succesful send SMS, the SIM900 answers with +CMGS: 64, where the number changes
-    simStatus = SMS_SENT;
+    simStatus = ST_OK;
     smsSendStep = 0;
   }
 }
@@ -294,33 +292,6 @@ void Sim::setupSim(){
   simStatus == ST_INIT;
 }
 
-//void Sim::setupSequence(){
-//   //allow certain amount of time for setting up of SIM
-//  while(simStatus == ST_INIT){
-//    //Indicate initialization with blinking
-//    displayStatus();
-//    simRead();
-//    if (rSimMsg){
-//      //the message from sim has been finished
-//      wrSimToPc();
-//      
-//      clearBuffer();
-//      rSimMsg = false;
-//    }
-//    if (timePassed(startOfSetup) > SIM900_MAX_SETUP_TIME){
-//      //Initialization timed out
-//      Serial.println("INIT TO");
-//      //Set the status of the SIM to error
-//      simStatus = ST_INIT_ER;
-//      displayStatus();
-//      //Inform main sketch of error
-//      updateStatusCb(INIT_FAILED);
-//      break;
-//    }
-//  }
-//  Serial.println("SIM setup finished");
-//}
-
 void Sim::loop(){
   displayStatus();
   simRead();
@@ -337,7 +308,7 @@ void Sim::loop(){
     clearBuffer();
     rSimMsg = false;
   }
-  if (simStatus = ST_INIT){
+  if (simStatus == ST_INIT){
     if (timePassed(startOfSetup) > SIM900_MAX_SETUP_TIME){
       //Initialization timed out
       Serial.println("INIT TO");

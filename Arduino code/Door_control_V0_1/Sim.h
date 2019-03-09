@@ -125,7 +125,7 @@ class Sim{
     static const byte TUREND_OFF = 5;
     
     //indicates the ready condition of the SIM900 chip
-    char simStatus = 5;//0 - initializing, 1 - ready, 2 - init error, 3 - sytem busy, 4 - operational error
+    byte simStatus = TUREND_OFF;//0 - initializing, 1 - ready, 2 - init error, 3 - sytem busy, 4 - operational error
     
     //setup function. Read messages from SIM900 inserts simcode if necessary
     void setupSim();
