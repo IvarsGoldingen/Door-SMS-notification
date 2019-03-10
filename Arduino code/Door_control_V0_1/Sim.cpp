@@ -4,7 +4,7 @@
 #include <SoftwareSerial.h>
 
 //constructor for Sim object
-Sim::Sim(byte serPin1, byte serPin2, byte ledG, byte ledR, void(*cb)(byte)):
+Sim::Sim(byte serPin1, byte serPin2, byte ledG, byte ledR, void(*cb)(byte), void(*cbTime)(String)):
 //this syntax for SW serial allows the SW serial object be created with parameters
 Sim900Serial(SoftwareSerial(serPin1, serPin2)){
   statusLed = ledG;
@@ -14,6 +14,7 @@ Sim900Serial(SoftwareSerial(serPin1, serPin2)){
   pinMode(SIM_PWR_PIN, OUTPUT);
   digitalWrite(SIM_PWR_PIN, LOW);
   updateStatusCb = cb;
+  sendTimeCb = cbTime;
 }
 
 void Sim::simRead(){
@@ -92,9 +93,9 @@ void Sim::initMsgR(){
     simOutBufCount = ENTER_PIN_OUT.length() + PIN.length();
     wrToSim();
   } else if (CALL_READY.length() == (simInBufferCount - 2)){
+    simStatus = ST_OK;
     //call ready message received. Initialization can now be exited
     updateStatusCb(INIT_FINISHED);
-    simStatus = ST_OK;
     displayStatus();
   }
 }
@@ -116,7 +117,7 @@ void Sim::clearBuffer(){
 char ST_INIT = 0;
 const char ST_OK = 1;
 const char ST_INIT_ER = 2;
-const char ST_BUSY = 3;
+const char ST_SENDING = 3;
 const char ST_OP_ER = 4;
 */
 void Sim::displayStatus(){
@@ -134,7 +135,8 @@ void Sim::displayStatus(){
     //Red led on when niitialization error
     digitalWrite(statusLed, LOW);
     digitalWrite(errorLed, HIGH);
-  } else if (simStatus == ST_BUSY){
+  } else if (simStatus == ST_SENDING){
+    digitalWrite(errorLed, LOW);
     //Blink status led when busy - sending sms or other
     if (timePassed(timeOfLastStatusBlink) > SIM_BUSY_LED_PERIOD){
       timeOfLastStatusBlink = millis();
@@ -142,6 +144,7 @@ void Sim::displayStatus(){
     }
   } else if (simStatus == ST_OP_ER){
     //blinking red led when functional fault
+    digitalWrite(statusLed, LOW);
     if (timePassed(timeOfLastStatusBlink) > F_ERROR_LED_PERIOD){
       timeOfLastStatusBlink = millis();
       digitalWrite(errorLed, !digitalRead(errorLed));
@@ -155,17 +158,14 @@ void Sim::displayStatus(){
 
 void Sim::simSendingSMSMsgR(){
   //check the message comming from SIM900 against possible variations
-  if (smsSendStep == 2){
-    Serial.println(SEND_SMS_OUT.length() + PHONE_NR.length());
-    Serial.println(simInBufferCount);
-    Serial.println(simInBuffer);
-  }
-  
+  /*
   if (smsSendStep == 1 && (simInBufferCount - 2) == 2){
     //Check if sim answers with OK
     Serial.println("CMGF=1 OK");
     sendSms = true;
-  } else if (smsSendStep == 2  && ((SEND_SMS_OUT.length() + (PHONE_NR.length())) == (simInBufferCount - 4))){
+  } else 
+  */
+  if (smsSendStep == 2  && ((SEND_SMS_OUT.length() + (PHONE_NR.length())) == (simInBufferCount - 4))){
     //-4 because 2 quates added around the number and 2 end of lince characters at end of message
     Serial.println("SMS_SEND_ECHO");
     //SIM900 echoing SMS message send, allow for the next step
@@ -185,6 +185,8 @@ void Sim::simSendingSMSMsgR(){
     //on succesful send SMS, the SIM900 answers with +CMGS: 64, where the number changes
     simStatus = ST_OK;
     smsSendStep = 0;
+  } else {
+    Serial.println("UM sim send");
   }
 }
 
@@ -200,12 +202,40 @@ void Sim::simMsgR(){
   } else {
     //NOT an error message from SIM900
     //check the message comming from SIM900 against possible variations
-    if (smsSendStep > 0){
+    if (simStatus == ST_SENDING){
       //if smsSending is initiated listen for thosse specific messages
       simSendingSMSMsgR();
+    } else if (simStatus == GETTING_TIME){
+      simGettingTimeMsgR();
     }
   }
 }
+
+//TODO:get time here
+//TODO:make a string callback to main sketch
+//answer: 
+//+CCLK: "19/03/09,11:58:11+08"
+void Sim::simGettingTimeMsgR(){
+  Serial.println("T");
+  if (simInBuffer[0] == '+' &&
+       simInBuffer[1] == 'C' &&
+       simInBuffer[2] == 'C' &&
+       simInBuffer[3] == 'L' &&
+       simInBuffer[4] == 'K'){
+    simStatus = ST_OK;    
+    //time from sim received
+    //replace the last quate mark with null character so that is all that is sent to the main scetch
+    simInBuffer[simInBufferCount - 3] = '\0';
+    //Start printing only from the 8th symbol which is the first numbern in the answer
+    sendTimeCb(simInBuffer+8);
+  }
+}
+
+/*getting time
+ * AT+CCLK? 
+
+ *
+ */
 
 void Sim::sendSMS(){
   if (smsSendStep == 1){
@@ -213,7 +243,6 @@ void Sim::sendSMS(){
     //the first step is to initiate the mesage sending with the phone number
     //Combine the send SMS message and phone number. Put quates around the number
     String sumString = SEND_SMS_OUT + "\"" + PHONE_NR + "\"";
-    //TODO not getting thsecond quote marks
     sumString.toCharArray(simOutBuf, 32);
     //+2 because 2 quate marks have been added
     simOutBufCount = SEND_SMS_OUT.length() + PHONE_NR.length() + 2;
@@ -250,8 +279,8 @@ unsigned long Sim::timePassed(unsigned long time){
 //turns on the sim chip
 //the pin only needs to be pulled high
 void Sim::on(){
+  Sim900Serial.begin(SIM900_BAUD);
   digitalWrite(SIM_PWR_PIN, HIGH);
-  simStatus = ST_INIT;
 }
 
 //turns off the sim chip
@@ -283,17 +312,18 @@ void Sim::sendMessage(String text){
   text.toCharArray(messageBuffer, 64);
   messageLength = text.length();
   timeOfSMSSendStart = millis();
+  simStatus = ST_SENDING;
 }
 
 void Sim::setupSim(){
-  Sim900Serial.begin(SIM900_BAUD);
   on();
   startOfSetup = millis();
-  simStatus == ST_INIT;
+  simStatus = ST_INIT;
 }
 
 void Sim::loop(){
   displayStatus();
+  //Check for single bytes from SIM900
   simRead();
   if (rSimMsg){
     //the message from sim has been finished
@@ -316,8 +346,13 @@ void Sim::loop(){
       simStatus = ST_INIT_ER;
       updateStatusCb(INIT_FAILED);
     }
-  } else if (sendSms){
-    if (timePassed(timeOfSMSSendStart) > SMS_MAX_SEND_TIME){
+  } else if (simStatus == ST_SENDING){
+    if (sendSms){
+      //Wait for answer before next step
+      sendSms = false;
+      //Sim module ready to receive the next message
+      sendSMS();
+    } else if (timePassed(timeOfSMSSendStart) > SMS_MAX_SEND_TIME){
       Serial.println("SMS_SEND_TO");
       smsSendStep = 0;
       sendSms = false;
@@ -325,10 +360,26 @@ void Sim::loop(){
       //Inform main sketch of error
       updateStatusCb(SMS_SEND_FAILED);
     }
-    //Wait for answer before next step
-    sendSms = false;
-    sendSMS();
   } else if (pwrOffStep > 0){
     offSequence();
   }
 }
+
+void Sim::setTime(String textTime){
+  String timeString = SET_TIME + "\"" + textTime + "\"";
+  timeString.toCharArray(simOutBuf, 32);
+  simOutBufCount = timeString.length();
+  wrToSim();
+}
+
+void Sim::getTime(){
+  simStatus = GETTING_TIME;
+  GET_TIME.toCharArray(simOutBuf, 32);
+  simOutBufCount = GET_TIME.length();
+  wrToSim();
+}
+
+/*setting time
+AT+CCLK="19/03/09,11:56:55+08"
+answer: OK
+*/

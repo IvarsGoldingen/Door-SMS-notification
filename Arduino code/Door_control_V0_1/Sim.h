@@ -23,7 +23,7 @@ class Sim{
     //The amount of time in MS SIM900 is allowed to be setup before the Init loop exits with error
     const unsigned int SIM900_MAX_SETUP_TIME = 60000;
     //Time amount allowed for sending of SMS.Note that there is a defined delay when sending an sms: SMS_CZ_DELAY
-    const unsigned int SMS_MAX_SEND_TIME = 20000;
+    const unsigned int SMS_MAX_SEND_TIME = 30000;
     //TODO: move this to the constructor
     //SIM900 user specific data
     const String PIN = "2046";
@@ -39,14 +39,16 @@ class Sim{
     const String ENTER_PIN_OUT = "AT+CPIN=";
     //send sms
     const String SEND_SMS_OUT = "AT+CMGS=";
+    //set time
+    const String SET_TIME = "AT+CCLK=";
+    //get time
+    const String GET_TIME = "AT+CCLK?";
     //The amount of time in SMS sending it is waited before the ctrl+z character is sent
     const int SMS_CZ_DELAY = 15000;
     //Power on off pin
     const byte SIM_PWR_PIN = 7;
     //pause time when turning off hte sim pin using the PWR pin
     const int PWR_OFF_SWITCH_TIME = 2000;
-    
-    
     
     //variable to store the time when sending the SMS message was started
     long timeOfSMSSendStart = 0;
@@ -104,18 +106,23 @@ class Sim{
     void setupSequence();
     //A pointer to a function in the main scetch. informs the main scetch of the status of SIM operations.
     void (*updateStatusCb)(byte) = 0;
+    //A pointer to a function in the main scetch. Sends the time as a string.
+    void (*sendTimeCb)(String) = 0;
+    //a function for reading the time when sim module answers
+    void simGettingTimeMsgR();
   public:
     //public classes and variables
     //constructor
-    Sim(byte serPin1, byte serPin2, byte ledG, byte ledR, void(*cb)(byte));
+    Sim(byte serPin1, byte serPin2, byte ledG, byte ledR, void(*cb)(byte), void(*cbTime)(String));
 
     //possible states of the SIM chip
     const byte ST_INIT = 0;
     const byte ST_OK = 1;
     const byte ST_INIT_ER = 2;
-    const byte ST_BUSY = 3;
+    const byte ST_SENDING = 3;
     const byte ST_OP_ER = 4;
     const byte ST_OFF = 5;
+    const byte GETTING_TIME = 6;
 
     //possible status updates from Sim lib to main sketch
     static const byte INIT_FINISHED = 1;
@@ -138,6 +145,14 @@ class Sim{
     //TODO: make private
     //turn on sim c=hip
     void on();
+    /*set real time clock time on the SIM900
+    * text time should be like this: <yy/MM/dd,hh:mm:ss±zz> 
+    * Example: <19/03/09,11:56:55+08>
+    * The last 2 digits being time zone, see the sim module documentation
+    */
+    void setTime(String textTime);
+    //TODO
+    void getTime();
 
     /**Sending SMS values
     step 1: enter number
