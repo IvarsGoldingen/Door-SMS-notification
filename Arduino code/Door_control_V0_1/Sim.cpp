@@ -286,6 +286,8 @@ void Sim::on(){
 //turns off the sim chip
 //sequence on the pwr pin low 2s, high 2s, low
 void Sim::off(){
+  //set state to OK so other actions end
+  simStatus = ST_OK;
   digitalWrite(SIM_PWR_PIN, LOW);
   pwrPinSwitchTime = millis();
   pwrOffStep = 1;
@@ -341,7 +343,7 @@ void Sim::loop(){
   if (simStatus == ST_INIT){
     if (timePassed(startOfSetup) > SIM900_MAX_SETUP_TIME){
       //Initialization timed out
-      Serial.println("INIT TO");
+      Serial.println("init TO");
       //Set the status of the SIM to error
       simStatus = ST_INIT_ER;
       updateStatusCb(INIT_FAILED);
@@ -353,7 +355,7 @@ void Sim::loop(){
       //Sim module ready to receive the next message
       sendSMS();
     } else if (timePassed(timeOfSMSSendStart) > SMS_MAX_SEND_TIME){
-      Serial.println("SMS_SEND_TO");
+      Serial.println("sms send TO");
       smsSendStep = 0;
       sendSms = false;
       simStatus = ST_OP_ER;
@@ -366,10 +368,15 @@ void Sim::loop(){
 }
 
 void Sim::setTime(String textTime){
-  String timeString = SET_TIME + "\"" + textTime + "\"";
-  timeString.toCharArray(simOutBuf, 32);
-  simOutBufCount = timeString.length();
-  wrToSim();
+  if (simStatus == ST_OK){
+    String timeString = SET_TIME + "\"" + textTime + "\"";
+    timeString.toCharArray(simOutBuf, 32);
+    simOutBufCount = timeString.length();
+    wrToSim();
+    Serial.println("Time set success");
+  } else {
+    Serial.println("Unable to set time");
+  }
 }
 
 void Sim::getTime(){
