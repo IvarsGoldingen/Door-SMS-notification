@@ -1,6 +1,29 @@
+/*
+ * DOOR CONTROL v0.1
+ * Sketch sends SMS using sim900 module, when a door is opened
+ * Sending possible in 3 modes: send always, send depending on time(RTC on SIM900), dont send
+ * Button for togling modes
+ * Manual control through serial available
+ * TODOs:
+ * Implement logging on SD card. Slot available on SIM module
+ * Clock sysnc using SIM
+ */
+
 #include "Sim.h"
 #include "ButtonIB.h"
 #include "LedControl.h"
+
+//Voltage input connected to arduino with a voltage divider. I am using 10k and 20k.
+//So the voltage read on the input is one third of the actual voltage
+const byte VOLTGE_DIVIDER_K = 3;
+//Voltage input pin
+const byte V_PIN = 0;
+//time between voltage measurements in s (If timer1 interrupt set to happen once a second)
+const int V_RD_DLY = 900;//900/60=15min
+//Values used to calculate the actual volts read on the analog input
+const float VOLTS_PER_UNIT = 5.0/1023.0;
+//Minumum voltage level, error message sent otherwise
+const float MINIMUM_VOLTAGE = 5.0;
 
 /**Status indication values**/
 //Green led output. Const on SIM900 ready, blinking setting up
@@ -59,10 +82,15 @@ const byte SEND_TIME = 1;
 const byte SEND_ALWAYS = 2;
 //don't send
 const byte SEND_OFF = 3;
+//don't send
+const byte LOW_BAT = 4;
 
-//variable of keeping track of the sending mode
-byte sendMode = SEND_TIME;
-
+//Set true when input voltage should be read
+volatile bool readV = false;
+//counter of timer interrupts to compare to with the V-RD_DLY int the ISR
+volatile int vDlyCntr = 0;
+//battery low indication
+bool batteryLow = false;
 
 bool doorTriggered = false;
 //variable to store time since the last door moved, used for debounce
@@ -74,6 +102,11 @@ long doorTriggerTime = -DELAY_FOR_DOOR_EVENTS;
 //Made true when door is triggered
 //when true the sim chip will get turned on, sms sent, then turned off
 bool sending = false;
+//variable of keeping track of the sending mode
+byte sendMode = SEND_TIME;
+
+//A buffer where the neccessary message is stored. At this point either "Door triggered" or battery low "possible"
+char messageBuffer[16];
 
 /*********************************************************************************
 callback from the SIM library
@@ -100,17 +133,58 @@ must be declared before the contructur so the function is visible to it
 sends time from SIM module's RTC
 */
 void timeCallback(String simTime){
+  //remove time zone from the string, which starts from index 17
+  simTime.remove(17);
   Serial.println(simTime);
   if (sending){
-    //if sending is currently in progress then continue with sending the sms
-    evaluateSend(simTime);  
+    //determine what type of message is being sent
+    if (messageBuffer[0] == 'D'){
+      //A door triggered message is being sent
+      //needs to be evaluated against modes and possibly time
+      bool sendSMS = false;
+      if (sendMode == SEND_OFF){
+        Serial.println("Sending mode off");
+      } else if (sendMode == SEND_TIME){
+        sendSMS = evaluateSend(simTime);
+      } else if (sendMode == SEND_ALWAYS){
+        sendSMS = true;
+        Serial.println("Sending mode allways");
+      }
+      if(sendSMS){
+        Serial.println("Sending");
+        float inputVoltage = readInputVoltage();
+        //sendSms((char*)messageBuffer + '_' + simTime + '_' + "V:" + String(inputVoltage));
+        String temp(messageBuffer);
+        String fullMessage = temp + "\n" + simTime + "\nV: " + String(inputVoltage);
+        Serial.println(fullMessage);
+        sendSms(fullMessage);
+      } else {
+        stopSim();
+        Serial.println("Not sending");
+      }
+      
+    } else if (messageBuffer[0] == 'B'){
+      //A battery low meessage is being sent
+      float inputVoltage = readInputVoltage();
+      String temp(messageBuffer);
+      String fullMessage = temp + "\n" + simTime;
+      Serial.println(fullMessage);
+      sendSms(fullMessage);
+    } else {
+      Serial.println("Unknown message in message buffer");
+    }
+    
+     
   }
 }
 
 //Create a Sim object to control the Sim900 chip
 Sim sim(SW_SERIAL_PIN1,SW_SERIAL_PIN2,STATUS_LED_O,ERROR_LED_O, updateCallback, timeCallback);
 
+//calback from the button object when a button is pressed
 void modeButtonPressed(){
+  //allow the button to override the low bat condition
+  batteryLow = false;
   switchSendMode();
 }
 
@@ -121,45 +195,31 @@ LedControl modeLed(MODE_LED);
 
 //Evaluates if sending of SMS is neccessary depending on send mode and time
 //TODO: check only time here, and check for send off earlier
-void evaluateSend(String simTime){
-  if (sendMode == SEND_OFF){
-    Serial.println("Sending off");
-    stopSim();
-  } else if (sendMode == SEND_TIME){
-    //-48 because the received number is from ASCII table not numeric
-    byte year = ((simTime[0] - 48) * 10) + (simTime[1] - 48);
-    byte month = ((simTime[3] - 48) * 10) + (simTime[4] - 48);
-    byte day = ((simTime[6] - 48) * 10) + (simTime[7] - 48);
-    byte hour = ((simTime[9] - 48) * 10) + (simTime[10] - 48);
-    //byte minute = ((simTime[12] - 48) * 10) + (simTime[13] - 48);
-    //byte second = ((simTime[15] - 48) * 10) + (simTime[16] - 48);
-    byte weekDay = calcDayOfWeek(year, month, day);
-    bool sendSMS = false;
-    Serial.println(SEND_WEEKDAYS & (0b00000001 << weekDay));
-    if((SEND_WEEKDAYS & (0b00000001 << weekDay)) > 0){
-      Serial.println("Weekday");
-      if(hour >= SEND_TIME_H_START &&
-        hour < SEND_TIME_H_END){
-        Serial.println("Working time");
-        sendSMS = true;
-      } else {
-        Serial.println("Past working time");
-      }
+bool evaluateSend(String simTime){
+  Serial.println("Evaluating send time");
+   //-48 because the received number is from ASCII table not numeric
+  byte year = ((simTime[0] - 48) * 10) + (simTime[1] - 48);
+  byte month = ((simTime[3] - 48) * 10) + (simTime[4] - 48);
+  byte day = ((simTime[6] - 48) * 10) + (simTime[7] - 48);
+  byte hour = ((simTime[9] - 48) * 10) + (simTime[10] - 48);
+  //byte minute = ((simTime[12] - 48) * 10) + (simTime[13] - 48);
+  //byte second = ((simTime[15] - 48) * 10) + (simTime[16] - 48);
+  byte weekDay = calcDayOfWeek(year, month, day);
+  bool sendSMS = false;
+  Serial.println(SEND_WEEKDAYS & (0b00000001 << weekDay));
+  if((SEND_WEEKDAYS & (0b00000001 << weekDay)) > 0){
+    Serial.println("Weekday");
+    if(hour >= SEND_TIME_H_START &&
+      hour < SEND_TIME_H_END){
+      Serial.println("Working time");
+      sendSMS = true;
     } else {
-      Serial.println("Weekend");
+      Serial.println("Past working time");
     }
-    if (sendSMS){
-      //TODO: comment
-      Serial.println("Sending");
-      sim.sendMessage("Door triggered\r" + simTime);
-    } else {
-      stopSim();
-      Serial.println("Not sending");
-    }
-  } else if (sendMode == SEND_ALWAYS){
-    Serial.println("Send allways");
-    sim.sendMessage("Door triggered\r" + simTime);
+  } else {
+    Serial.println("Weekend");
   }
+  return sendSMS;
 }
 
 void sendSms(String text){
@@ -167,16 +227,39 @@ void sendSms(String text){
 }
  
 void setup() {
-  //Serial setup
   //Initiate serial with the computer
   Serial.begin(115200);
-  //PIN setup
+  //Setup the door input sensor
   pinMode(DOOR_SENSOR_P, INPUT_PULLUP);
-  //Turn the sim module of on startup
+  //Turn the sim module off on startup
   digitalWrite(7, LOW);
   //set the mode led on initally, because the modeule starts up with ALWAYS_SEND mode
   modeLed.ledOn();    
   Serial.println("ON");
+
+  //Setup timer1 interrupt for timeing when voltage input should be read
+  //These registers must be set to 0 for the timer to work
+  TCCR1A = 0;
+  TCCR1B = 0;
+  //Set the actual timer counter value to 0
+  TCNT1  = 0;
+  // The compare register, when this count will be reached the interruptwill happen
+  OCR1A = 15625;
+  //set mode of timer to CTC- Clear Timer on Compare match
+  TCCR1B |= (1 << WGM12);
+  //set the prescaler. 101 = 1024
+  TCCR1B |= (1 << CS12);     
+  TCCR1B |= (0 << CS11);    
+  TCCR1B |= (1 << CS10);
+  //enable timer compare interrupt
+  TIMSK1 |= (1 << OCIE1A);
+  /*
+   * CPU freq devided by prescaler
+   * 16000000/1024 = 15625
+   * Devide result with set compare result
+   * 15625/15625=1 Hz
+   * 1 s intervals between interrupt calls
+   */        
 }
 
 
@@ -185,13 +268,16 @@ void loop() {
   sim.loop();
   modeButton.loop();
   modeLed.loop();
-  if(!sending){
+  if(!sending && !batteryLow){
     //if we are not sending already, check for door trigger
     if(checkDoorOpen()){
       //Door opened
       if (timePassed(doorTriggerTime) > DELAY_FOR_DOOR_EVENTS){
         //Enough time has passed since the last send sequence
-        Serial.println("Send sms");
+        Serial.println("Start SMS send sequence");
+        //Write the message we want into the messageBuffer
+        String message = "Door";
+        message.toCharArray(messageBuffer, 16);
         //store when the SMS sending was started to allow for delays between sends
         doorTriggerTime = millis();
         //Start send sequence
@@ -199,8 +285,29 @@ void loop() {
       } else {
         Serial.println("Door delay active");
       }
-    } 
+    } else if (readV){
+      //Set this to false to wait for the next read. It is set true in the timer1 ISR
+      readV=false;
+      checkVoltage();
+    }
   }
+}
+
+//checks if voltage is not too low and if it is starts SMS send sequence
+void checkVoltage(){
+  float inputVoltage = readInputVoltage();
+  Serial.print("Voltage read: ");
+  Serial.println(inputVoltage);
+  if (inputVoltage < MINIMUM_VOLTAGE){
+    String message = "Bat low: " + (String)inputVoltage;
+    Serial.println(message);
+    message.toCharArray(messageBuffer, 16);
+    startSendSequence();
+    batteryLow = true;
+    modeLed.ledBlink(100);
+  } else {
+    Serial.println("Bat ok");
+  }  
 }
 
 //turn off sending of SMS and turns the sim chip of
@@ -357,6 +464,17 @@ void switchSendMode(){
   Serial.println(sendMode);
 }
 
+//Reads and returns input voltage on the set pin
+float readInputVoltage(){
+  //Read analog input
+  int anReadV = analogRead(V_PIN);
+  //Calculate the voltage on the analog pin
+  float votlage = anReadV*VOLTS_PER_UNIT;
+  //Calculate the actual input voltage which is dependant on the voltage divider
+  float inputVoltage = votlage*VOLTGE_DIVIDER_K;
+  return inputVoltage;
+}
+
 //calculates the day of week from date
 byte calcDayOfWeek (byte y, byte m, byte d) {
   // Old mental arithmetic method for calculating day of week
@@ -395,4 +513,15 @@ byte calcDayOfWeek (byte y, byte m, byte d) {
   // there are only 7 days in a week, so we "cast out" sevens
   while (w > 7) w = (w >> 3) + (w & 7);
   return w;
+}
+
+// timer compare interrupt service routine
+//used to determine if time to read the voltage input
+ISR(TIMER1_COMPA_vect)          
+{
+  vDlyCntr++;
+  if (vDlyCntr >= V_RD_DLY){
+     vDlyCntr = 0;
+     readV = true;
+  }
 }

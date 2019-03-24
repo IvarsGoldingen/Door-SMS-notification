@@ -1,3 +1,12 @@
+/*
+ * Library to control SIM900 arduino board
+ * TODOs:
+ * Currently only works correcty when the SIM card is PIN protected
+ * Setup so that the init function does not depend on SIM module just being turned on:after delay of no answer start
+ * communication automatically
+ * Bug: On/off does not work correctly. If off called when sim already off, it is then turned on.
+ */
+
 //This needs to be included in the library so it can access standard arduino functions
 #include "Arduino.h"
 #include "Sim.h"
@@ -211,12 +220,10 @@ void Sim::simMsgR(){
   }
 }
 
-//TODO:get time here
-//TODO:make a string callback to main sketch
+//Read the time  answer from SIM900
 //answer: 
 //+CCLK: "19/03/09,11:58:11+08"
 void Sim::simGettingTimeMsgR(){
-  Serial.println("T");
   if (simInBuffer[0] == '+' &&
        simInBuffer[1] == 'C' &&
        simInBuffer[2] == 'C' &&
@@ -226,7 +233,7 @@ void Sim::simGettingTimeMsgR(){
     //time from sim received
     //replace the last quate mark with null character so that is all that is sent to the main scetch
     simInBuffer[simInBufferCount - 3] = '\0';
-    //Start printing only from the 8th symbol which is the first numbern in the answer
+    //Start sending only from the 8th symbol which is the first numbern in the answer
     sendTimeCb(simInBuffer+8);
   }
 }
