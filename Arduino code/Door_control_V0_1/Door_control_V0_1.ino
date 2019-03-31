@@ -13,11 +13,14 @@
 #include "ButtonIB.h"
 #include "LedControl.h"
 
+//Pin used to enable disable the SIM module
+const byte SIM_ENABLE_P = 4;
+
 //Voltage input connected to arduino with a voltage divider. I am using 10k and 20k.
 //So the voltage read on the input is one third of the actual voltage
 const byte VOLTGE_DIVIDER_K = 3;
 //Voltage input pin
-const byte V_PIN = 0;
+const byte V_PIN = 4;
 //time between voltage measurements in s (If timer1 interrupt set to happen once a second)
 const int V_RD_DLY = 900;//900/60=15min
 //Values used to calculate the actual volts read on the analog input
@@ -29,19 +32,19 @@ const float MINIMUM_VOLTAGE = 5.0;
 //Green led output. Const on SIM900 ready, blinking setting up
 const int STATUS_LED_O = 8;
 //Const on, when sim900 fails to setup
-const int ERROR_LED_O = 9;
+const int ERROR_LED_O = 7;
 
 //Pins that will be used for the software serial to communicate with the sim900 chip
 const byte SW_SERIAL_PIN1 = 2;
 const byte SW_SERIAL_PIN2 = 3;
 
 //Pin used for send mode change
-const byte MODE_BUTTON = 10;
+const byte MODE_BUTTON = 11;
 //Pin used for signaling of the current send mode of the system
-const byte MODE_LED = 13;
+const byte MODE_LED = 10;
 
 //Door trigger values
-const byte DOOR_SENSOR_P = 12;
+const byte DOOR_SENSOR_P = 9;
 
 //Minimum time necessary for the door open to be registered as an event.
 const int MINIMUM_SWITCH_TIME = 1000;
@@ -232,7 +235,7 @@ void setup() {
   //Setup the door input sensor
   pinMode(DOOR_SENSOR_P, INPUT_PULLUP);
   //Turn the sim module off on startup
-  digitalWrite(7, LOW);
+  digitalWrite(SIM_ENABLE_P, LOW);
   //set the mode led on initally, because the modeule starts up with ALWAYS_SEND mode
   modeLed.ledOn();    
   Serial.println("ON");

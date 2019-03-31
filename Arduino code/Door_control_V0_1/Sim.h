@@ -46,7 +46,7 @@ class Sim{
     //The amount of time in SMS sending it is waited before the ctrl+z character is sent
     const int SMS_CZ_DELAY = 15000;
     //Power on off pin
-    const byte SIM_PWR_PIN = 7;
+    const byte SIM_PWR_PIN = 4;
     //pause time when turning off hte sim pin using the PWR pin
     const int PWR_OFF_SWITCH_TIME = 2000;
     
