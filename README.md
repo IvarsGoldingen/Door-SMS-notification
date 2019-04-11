@@ -12,3 +12,4 @@ A device that sends an SMS notification when a door is opened. Setup on Atmega A
 
 ## Photos
 
+![IMG_20190408_070154](https://user-images.githubusercontent.com/25284066/55977269-1134c980-5c97-11e9-98c1-4ae78c5deb4d.jpg)
